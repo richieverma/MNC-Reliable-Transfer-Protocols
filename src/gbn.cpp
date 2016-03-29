@@ -129,6 +129,12 @@ void A_input(struct pkt packet)
   
   //Check if ACK is corrupt
   if (!check_corrupt(packet, 1)){
+    if (send_base > packet.acknum){
+      //Restart timer
+      stoptimer(0);
+      starttimer(0, timer_fin);      
+      return;
+    }
     send_base = packet.acknum + 1;
     
     if (send_base == nextseqnum){
@@ -151,6 +157,18 @@ void A_input(struct pkt packet)
       //Restart timer
       stoptimer(0);
       starttimer(0, timer_fin);
+      
+      //Update timer based on new_rtt only if new_rtt is more than base RTT - to ignore quick ACK's for retransmissions
+      end_time = get_sim_time();
+      float new_rtt = end_time - start_time;
+      if (new_rtt > RTT){
+        float new_timer = (0.875 * timer_fin) + (0.125 * new_rtt);
+        if (new_timer > RTT && new_timer < 2*BASE_RTT){
+          timer_fin = new_timer;
+        }
+        cout<<"Inside A_input. New RTT:"<<new_rtt<<" New timer set to:"<<timer_fin<<endl;
+      }  
+      
       //Check and send any buffered messages that fall into the window
       if (buffer_pos != -1){
         for (int i = buffer_pos; (i < nextseqnum) && (i < send_base+window); i++){
