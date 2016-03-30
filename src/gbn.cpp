@@ -94,19 +94,15 @@ void A_output(struct msg message)
   struct pkt p_toLayer3;
   
   p_toLayer3.seqnum = nextseqnum;
-  //p_toLayer3.acknum = recv_ack;
   p_toLayer3.acknum = nextseqnum;
   strncpy(p_toLayer3.payload, message.data, 20);
-  //TODO Generate checksum
   p_toLayer3.checksum = generate_checksum(p_toLayer3, 0); 
-  //Buffer Message
+  
+  //Store a copy of Message
   sent_dataPkt[nextseqnum++] = p_toLayer3;
-  if (buffer_pos == -1){
-    buffer_pos = nextseqnum-1;
-  }
   
   //Send when packet is within sender window
-  if (nextseqnum < send_base+window){
+  if (p_toLayer3.seqnum < send_base+window){
     tolayer3(0, p_toLayer3);    
   
     if (send_base == nextseqnum-1){
@@ -119,6 +115,9 @@ void A_output(struct msg message)
   //Buffer if packet seqnum is out of sender window  
   else{
     cout<<"A_output Message SEQ:"<<nextseqnum-1<<" buffered"<<endl;
+    if (buffer_pos == -1){
+      buffer_pos = nextseqnum-1;
+    }    
   }
 }
 
@@ -139,6 +138,7 @@ void A_input(struct pkt packet)
     
     if (send_base == nextseqnum){
       stoptimer(0);  
+      
       //Update timer based on new_rtt only if new_rtt is more than base RTT - to ignore quick ACK's for retransmissions
       end_time = get_sim_time();
       float new_rtt = end_time - start_time;
@@ -148,9 +148,7 @@ void A_input(struct pkt packet)
           timer_fin = new_timer;
         }
         cout<<"Inside A_input. New RTT:"<<new_rtt<<" New timer set to:"<<timer_fin<<endl;
-      }      
-      //Update last received ACK number
-      //recv_ack = packet.acknum;       
+      }          
     }
     
     else{
@@ -169,14 +167,14 @@ void A_input(struct pkt packet)
         cout<<"Inside A_input. New RTT:"<<new_rtt<<" New timer set to:"<<timer_fin<<endl;
       }  
       
-      //Check and send any buffered messages that fall into the window
+      //Check and send any buffered messages that fall into the new sender window
       if (buffer_pos != -1){
         for (int i = buffer_pos; (i < nextseqnum) && (i < send_base+window); i++){
           tolayer3(0, sent_dataPkt[i]);
           buffer_pos++;
         }
       }
-      if (buffer_pos == send_base+window){
+      if (buffer_pos == nextseqnum){
         buffer_pos = -1;
       }      
     }    
@@ -185,8 +183,6 @@ void A_input(struct pkt packet)
     cout<<"Inside A_input. ACK corrupt\n";    
     return;
   }
-  
-
 }
 
 /* called when A's timer goes off */
