@@ -3,7 +3,8 @@
 #include <string>
 #include <cstring>
 #include <vector>
-#include <unordered_map>
+#include <algorithm>
+
 using namespace std;
 
 /* ******************************************************************
@@ -38,7 +39,8 @@ static int send_buffer_pos = -1; // Position of sender buffer pointer
 
 static struct pkt sent_dataPkt[1010]; // Buffer of the data packet sent to B
 static vector <pkt> in_flight; //List of packets sent so far
-static unordered_map <int, float> in_flight_timer;
+//static unordered_map < int, float > in_flight_timer;
+static float in_flight_timer[1010];
 static float start_time, end_time, timer_fin = 0.0;
 
 //Receiver
@@ -46,7 +48,8 @@ static int recv_base = 1; //Seq no of first packet in receiver's window
 static int expectedseqnum = 1; //Expected Seq no of next packet received from A
 static struct pkt sent_ackPkt[1010]; // Copy of all ACK's sent to A
 static struct pkt recv_dataPkt[1010]; // Buffer of the data packet received by B
-static unordered_map <int, int> ack_pkts; //Keep track of seqnum for which ack has been sent
+//static unordered_map < int, int > ack_pkts; //Keep track of seqnum for which ack has been sent
+static int ack_pkts[1010]; //Keep track of seqnum for which ack has been sent
 
 //Function to generate checksum
 int generate_checksum(struct pkt p, int DataOrAck){
@@ -99,10 +102,10 @@ bool check_corrupt(struct pkt p, int DataOrAck){
 //Function to remove the packet with given seqnum from list of in-flight packets
 void update_in_flight_packets(int seqnum){
   if (in_flight.empty()){
-    cout<<"ERROR while updating in-flight. There are no elements\n"
+    cout<<"ERROR while updating in-flight. There are no elements\n";
   }
-  for(auto it = in_flight.begin(); it != in_flight.end(); ++it){
-    if ((*it).seqnum == seqnum){
+  for(vector <pkt>::iterator it = in_flight.begin(); it != in_flight.end(); ++it){
+    if (it->seqnum == seqnum){
       it = in_flight.erase(it);
       return;
     }
@@ -110,11 +113,20 @@ void update_in_flight_packets(int seqnum){
   cout<<"ERROR while updating in-flight. There is no packet with seqnum:"<<seqnum<<endl;
 }
 
+//Function to sort vector of packets on the basis of timer expiry
+struct expiry_timer_less_than
+{
+  inline bool operator() (const pkt& p1, const pkt& p2)
+  {
+    return (in_flight_timer[p1.seqnum] < in_flight_timer[p2.seqnum]);
+  }
+};
+
 
 /* called from layer 5, passed the data to be sent to other side */
 void A_output(struct msg message)
 {
-  cout<<"A_output Base:"<<send_base<<" nextseqnum:"<<nextseqnum<<" window:"<<window<<endl;
+  cout<<"\nA_output Base:"<<send_base<<" nextseqnum:"<<nextseqnum<<" window:"<<window<<endl;
   
   //Create new pkt to send to layer 3
   struct pkt p_toLayer3;
@@ -130,10 +142,11 @@ void A_output(struct msg message)
   //Send when packet is within sender window
   if (p_toLayer3.seqnum < send_base+window){
     tolayer3(0, p_toLayer3);    
+    cout<<"A_output sent to layer 3, SEQ:"<<nextseqnum-1<<" Data:"<<message.data<<" Time:"<<get_sim_time()<<endl;
     
+    //Start full timer if there are no in-flight packets
     if (send_base == nextseqnum-1){
       start_time = get_sim_time();      
-      cout<<"A_output sent to layer 3, SEQ:"<<send_base<<" Data:"<<message.data<<" Time:"<<get_sim_time()<<endl;
       starttimer(0, timer_fin);
     }
     
@@ -181,9 +194,10 @@ void A_input(struct pkt packet)
     if (!in_flight.empty()){
       end_time = get_sim_time();      
       float remaining_time_before_timer_expires = timer_fin - (end_time - in_flight_timer[packet.acknum]);
+      if (remaining_time_before_timer_expires < 0) remaining_time_before_timer_expires = 0;      
       float transmission_time_diff = in_flight_timer[in_flight[0].seqnum] - in_flight_timer[packet.acknum];
-      
-      starttimer(0, remaining_time_before_timer_expires + transmission_time_diff);    
+      cout<<"A_input: Relative Timer:"<<remaining_time_before_timer_expires<<" TDiff:"<<transmission_time_diff<<endl;
+      starttimer(0, remaining_time_before_timer_expires + transmission_time_diff + 5);    
     }
     
     //Update timer based on new_rtt only if new_rtt is more than base RTT - to ignore quick ACK's for retransmissions
@@ -206,8 +220,8 @@ void A_input(struct pkt packet)
     }
 
     //Check and send any buffered messages to B that fall into the new sender window of A
-    if (buffer_pos != -1){
-      for (int i = buffer_pos; (i < nextseqnum) && (i < send_base+window); i++){
+    if (send_buffer_pos != -1){
+      for (int i = send_buffer_pos; (i < nextseqnum) && (i < send_base+window); i++){
         tolayer3(0, sent_dataPkt[i]);
         
         //Add to the list of packets in flight, and record it sending time
@@ -218,11 +232,11 @@ void A_input(struct pkt packet)
         if (in_flight.empty()){
           starttimer(0, timer_fin);
         }
-        buffer_pos++;
+        send_buffer_pos++;
       }
     }
-    if (buffer_pos == send_base+window){
-      buffer_pos = -1;
+    if (send_buffer_pos == send_base+window){
+      send_buffer_pos = -1;
     }    
   }
   
@@ -249,9 +263,8 @@ void A_input(struct pkt packet)
 /* called when A's timer goes off */
 void A_timerinterrupt()
 {
-  cout<<"Inside A_timerinterrupt\n";
-  
   struct pkt packet = in_flight.front();
+  cout<<"\nInside A_timerinterrupt for SEQ:"<<packet.seqnum<<" Time:"<<get_sim_time()<<endl;
   
   //Remove from front of list of in-flight packets, since it's timer expired 
   in_flight.erase(in_flight.begin());
@@ -261,17 +274,20 @@ void A_timerinterrupt()
   
   //Retransmit packet
   tolayer3(0, packet);  
+  cout<<"Inside A_timerinterrupt Retransmitted SEQ:"<<packet.seqnum<<endl;
   
-  //Restart timer for next in-flight packet, if any
+  //Restart relative timer for next in-flight packet, if any
   if (!in_flight.empty()){
     end_time = get_sim_time();
-    float remaining_time_before_timer_expires = timer_fin - (end_time - in_flight_timer[packet.acknum]);
-    float transmission_time_diff = in_flight_timer[in_flight[0].seqnum] - in_flight_timer[packet.acknum];
-    
-    starttimer(0, remaining_time_before_timer_expires + transmission_time_diff);  
+    float remaining_time_before_timer_expires = timer_fin - (end_time - in_flight_timer[packet.seqnum]);
+    if (remaining_time_before_timer_expires < 0) remaining_time_before_timer_expires = 0;
+    float transmission_time_diff = in_flight_timer[in_flight[0].seqnum] - in_flight_timer[packet.seqnum];
+    cout<<"A_input: Relative Timer:"<<remaining_time_before_timer_expires<<" TDiff:"<<transmission_time_diff<<endl;
+    starttimer(0, remaining_time_before_timer_expires + transmission_time_diff + 5);  
   }
-  //Else start timer for this retransmitted packet
+  //Else start full timer for this retransmitted packet
   else{
+    cout<<"A_timerInterrupt: Full Timer:"<<timer_fin<<endl;    
     starttimer(0, timer_fin);
   }
   
@@ -294,6 +310,7 @@ void A_init()
 /* called from layer 3, when a packet arrives for layer 4 at B*/
 void B_input(struct pkt packet)
 {
+  
   struct pkt p_toLayer3;
   char data_fromA[20];
   
@@ -303,8 +320,32 @@ void B_input(struct pkt packet)
     return;
   }
   
+  cout<<"B_input ACK"<<packet.seqnum<<" RecvBase:"<<recv_base<<"\n"; 
+  
   //Process if packet is not corrupt, and has seqnum in receiver window
   if (packet.seqnum >= recv_base && packet.seqnum < recv_base+window){
+
+    //Send data received from A to B's Layer 5 if seqnum is in order, else buffer
+    if (packet.seqnum == recv_base){
+      strncpy(data_fromA, packet.payload, 20);
+      tolayer5(1, data_fromA);
+      cout<<"B_input data SEQ:"<<packet.seqnum<<"sent to layer 5\n";
+      ++recv_base;
+      
+      //Deliver other buffered messages, if any
+      while(ack_pkts[recv_base] == 1){
+        strncpy(data_fromA, recv_dataPkt[recv_base].payload, 20);
+        tolayer5(1, data_fromA);
+        cout<<"B_input data SEQ:"<<recv_dataPkt[recv_base].seqnum<<"sent to layer 5\n";       
+        ++recv_base;
+      }
+    }
+    else{
+      //Add out-of-order packet to buffer
+      recv_dataPkt[packet.seqnum] = packet;  
+      //Mark packet as received and ACKed
+      ack_pkts[packet.seqnum] = 1;       
+    }
     
     //Send ACK to A for packet received
     p_toLayer3.seqnum = 1;
@@ -313,31 +354,12 @@ void B_input(struct pkt packet)
     sent_ackPkt[packet.seqnum] = p_toLayer3;
     
     tolayer3(1, p_toLayer3);
-    cout<<"B_input ACK"<<expectedseqnum-1<<" sent to layer 3\n"; 
+    cout<<"B_input ACK"<<packet.seqnum<<" sent to layer 3 Time:"<<get_sim_time()<<"\n"; 
     
-    //Mark packet as received and ACKed
-    ack_pkts[packet.seqnum] == 1;
-    
-    //Send data received from A to B's Layer 5 if seqnum is in order, else buffer
-    if (packet.seqnum == recv_base){
-      strncpy(data_fromA, packet.payload, 20);
-      tolayer5(1, data_fromA);
-      cout<<"B_input data sent to layer 5\n";
-      
-      //Deliver other buffered messages, if any
-      while(ack_pkts[++recv_base] == 1){
-        strncpy(data_fromA, recv_dataPkt[packet.seqnum].payload, 20);
-        tolayer5(1, data_fromA);
-        cout<<"B_input data sent to layer 5\n";        
-      }
-    }
-    else{
-      //Add out-of-order packet to buffer
-      recv_dataPkt[packet.seqnum] = packet;      
-    }
+   
   }
   else if(packet.seqnum < recv_base){
-    cout<<"Inside B_input. Resend ACK\n";    
+    cout<<"Inside B_input. Resend ACK"<<packet.seqnum<<" Time:"<<get_sim_time()<<"\n";    
     tolayer3(1, sent_ackPkt[packet.seqnum]);    
   }
 }
