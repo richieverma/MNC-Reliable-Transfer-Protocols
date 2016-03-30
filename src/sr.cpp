@@ -29,18 +29,21 @@ struct packet_sent{
 
 //Global Params
 #define RTT 10
-#define BASE_RTT 18
+#define BASE_RTT 12
+#define DELAY 2
 
 //Sender
 static int send_base = 1; //Seq no of first packet in sender's window
 static int nextseqnum = 1; //Seq num of next packet that will be sent
 static int window = 0; //Window size of sender
 static int send_buffer_pos = -1; // Position of sender buffer pointer
+static int delay = 0;
 
 static struct pkt sent_dataPkt[1010]; // Buffer of the data packet sent to B
 static vector <pkt> in_flight; //List of packets sent so far
 //static unordered_map < int, float > in_flight_timer;
 static float in_flight_timer[1010];
+static float pkt_sent_timer[1010];
 static float start_time, end_time, timer_fin = 0.0;
 
 //Receiver
@@ -126,7 +129,7 @@ struct expiry_timer_less_than
 /* called from layer 5, passed the data to be sent to other side */
 void A_output(struct msg message)
 {
-  cout<<"\nA_output Base:"<<send_base<<" nextseqnum:"<<nextseqnum<<" window:"<<window<<endl;
+  cout<<"\nA_output Base:"<<send_base<<" nextseqnum:"<<nextseqnum<<" send_buffer_pos:"<<send_buffer_pos<<endl;
   
   //Create new pkt to send to layer 3
   struct pkt p_toLayer3;
@@ -146,13 +149,19 @@ void A_output(struct msg message)
     
     //Start full timer if there are no in-flight packets
     if (send_base == nextseqnum-1){
+      delay = 0;
       start_time = get_sim_time();      
-      starttimer(0, timer_fin);
+      starttimer(0, timer_fin + delay);
     }
+    
+    delay += DELAY;
     
     //Keep details of timers of packets in flight
     in_flight.push_back(p_toLayer3);
-    in_flight_timer[p_toLayer3.seqnum] = get_sim_time();
+    pkt_sent_timer[p_toLayer3.seqnum] = get_sim_time();
+    in_flight_timer[p_toLayer3.seqnum] = pkt_sent_timer[p_toLayer3.seqnum] + timer_fin + delay;
+    sort(in_flight.begin(), in_flight.end(), expiry_timer_less_than());    
+    
   }
   
   //Buffer if packet seqnum is out of sender window  
@@ -193,16 +202,16 @@ void A_input(struct pkt packet)
     //Restart timer for next in-flight packet, if any
     if (!in_flight.empty()){
       end_time = get_sim_time();      
-      float remaining_time_before_timer_expires = timer_fin - (end_time - in_flight_timer[packet.acknum]);
+      float remaining_time_before_timer_expires = in_flight_timer[packet.acknum] - end_time;
       if (remaining_time_before_timer_expires < 0) remaining_time_before_timer_expires = 0;      
-      float transmission_time_diff = in_flight_timer[in_flight[0].seqnum] - in_flight_timer[packet.acknum];
-      cout<<"A_input: Relative Timer:"<<remaining_time_before_timer_expires<<" TDiff:"<<transmission_time_diff<<endl;
-      starttimer(0, remaining_time_before_timer_expires + transmission_time_diff + 5);    
+      float transmission_time_diff = in_flight_timer[in_flight[0].seqnum] - end_time;
+      cout<<"A_input: Relative Timer:"<<remaining_time_before_timer_expires+transmission_time_diff<<endl;
+      starttimer(0, remaining_time_before_timer_expires + transmission_time_diff);    
     }
     
     //Update timer based on new_rtt only if new_rtt is more than base RTT - to ignore quick ACK's for retransmissions
     end_time = get_sim_time();
-    float new_rtt = end_time - in_flight_timer[packet.acknum];
+    float new_rtt = end_time - pkt_sent_timer[packet.acknum];
     if (new_rtt > RTT){
       float new_timer = (0.875 * timer_fin) + (0.125 * new_rtt);
       if (new_timer > RTT && new_timer < 2*BASE_RTT){
@@ -223,30 +232,38 @@ void A_input(struct pkt packet)
     if (send_buffer_pos != -1){
       for (int i = send_buffer_pos; (i < nextseqnum) && (i < send_base+window); i++){
         tolayer3(0, sent_dataPkt[i]);
-        
-        //Add to the list of packets in flight, and record it sending time
-        in_flight.push_back(sent_dataPkt[i]);
-        in_flight_timer[sent_dataPkt[i].seqnum] = get_sim_time();
+        cout<<"A_input buffered message sent to layer 3, SEQ:"<<i<<" nextseqnum:"<<nextseqnum<<" send_base:"<<send_base<<" Time:"<<get_sim_time()<<endl;
         
         //Need to start timer if it was not running
         if (in_flight.empty()){
+          delay = 0;
           starttimer(0, timer_fin);
         }
+        
+        delay += DELAY;
+        //Add to the list of packets in flight, and record it sending time
+        in_flight.push_back(sent_dataPkt[i]);
+        pkt_sent_timer[sent_dataPkt[i].seqnum] = get_sim_time();
+        in_flight_timer[sent_dataPkt[i].seqnum] = pkt_sent_timer[sent_dataPkt[i].seqnum] + timer_fin + delay; 
+        sort(in_flight.begin(), in_flight.end(), expiry_timer_less_than());
+        
+
         send_buffer_pos++;
       }
     }
-    if (send_buffer_pos == send_base+window){
+    if (send_buffer_pos == nextseqnum){
       send_buffer_pos = -1;
     }    
+    cout<<"A_input. New send_buffer_pos:"<<send_buffer_pos<<endl;
   }
   
   else{
     //Remove from list of in-flight packets
-    update_in_flight_packets(packet.acknum);
+    update_in_flight_packets(packet.acknum);  
 
     //Update timer based on new_rtt only if new_rtt is more than base RTT - to ignore quick ACK's for retransmissions
     end_time = get_sim_time();
-    float new_rtt = end_time - in_flight_timer[packet.acknum];
+    float new_rtt = end_time - pkt_sent_timer[packet.acknum];
     if (new_rtt > RTT){
       float new_timer = (0.875 * timer_fin) + (0.125 * new_rtt);
       if (new_timer > RTT && new_timer < 2*BASE_RTT){
@@ -274,16 +291,16 @@ void A_timerinterrupt()
   
   //Retransmit packet
   tolayer3(0, packet);  
-  cout<<"Inside A_timerinterrupt Retransmitted SEQ:"<<packet.seqnum<<endl;
+  cout<<"A_timerinterrupt Retransmitted SEQ:"<<packet.seqnum<<endl;
   
   //Restart relative timer for next in-flight packet, if any
   if (!in_flight.empty()){
     end_time = get_sim_time();
-    float remaining_time_before_timer_expires = timer_fin - (end_time - in_flight_timer[packet.seqnum]);
+    float remaining_time_before_timer_expires = in_flight_timer[packet.seqnum] - end_time;
     if (remaining_time_before_timer_expires < 0) remaining_time_before_timer_expires = 0;
-    float transmission_time_diff = in_flight_timer[in_flight[0].seqnum] - in_flight_timer[packet.seqnum];
-    cout<<"A_input: Relative Timer:"<<remaining_time_before_timer_expires<<" TDiff:"<<transmission_time_diff<<endl;
-    starttimer(0, remaining_time_before_timer_expires + transmission_time_diff + 5);  
+    float transmission_time_diff = in_flight_timer[in_flight[0].seqnum] - end_time;
+    cout<<"A_timerinterrupt: Relative Timer:"<<remaining_time_before_timer_expires+transmission_time_diff<<endl;
+    starttimer(0, remaining_time_before_timer_expires + transmission_time_diff);  
   }
   //Else start full timer for this retransmitted packet
   else{
@@ -293,7 +310,9 @@ void A_timerinterrupt()
   
   //Add retransmitted packet to the end of the list of in-flight packets and Update its sent timer
   in_flight.push_back(packet);
-  in_flight_timer[packet.seqnum] = get_sim_time();  
+  pkt_sent_timer[packet.seqnum] = get_sim_time(); 
+  in_flight_timer[packet.seqnum] = pkt_sent_timer[packet.seqnum] + timer_fin; 
+  sort(in_flight.begin(), in_flight.end(), expiry_timer_less_than());
 }  
 
 /* the following routine will be called once (only) before any other */
