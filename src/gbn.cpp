@@ -38,49 +38,38 @@ static int expectedseqnum = 1; //Expected Seq no of next packet received from A
 static struct pkt sent_ackPkt; // Copy of last ACK sent to A
 
 //Function to generate checksum
-int generate_checksum(struct pkt p, int DataOrAck){
+int generate_checksum(struct pkt p){
   int checksum = 0;
-  //Include payload only for Data Packet  
-  if (DataOrAck == 0){
-    for (int i = 0; i < 20; i++){
-      checksum += p.payload[i];
-    }
-    cout<<"Data: ";
+  
+  for (int i = 0; i < 20; i++){
+    checksum += p.payload[i];
   }
-  else{
-    cout<<"ACK: ";
-  }
+
   checksum += p.seqnum;
   checksum += p.acknum;
   
-  cout<<"Generated Checksum: "<<~checksum<<endl;
+  //cout<<"Generated Checksum: "<<~checksum<<endl;
   return ~checksum;
 }
 
 //Function to verify checksum
-bool check_corrupt(struct pkt p, int DataOrAck){
+bool check_corrupt(struct pkt p){
   int check = 0;
   check += p.seqnum;
   check += p.acknum;
   check += p.checksum; 
   
-  //Include payload only for Data Packet
-  if (DataOrAck == 0){  
-    for (int i = 0; i < 20; i++){
-      check += p.payload[i];
-    }  
-    cout<<"Data: ";    
-  }
-  else{
-    cout<<"ACK: ";
+  for (int i = 0; i < 20; i++){
+    check += p.payload[i];
   }  
-  cout<<"Checking Checksum: "<<p.checksum; 
+
+  //cout<<"Checking Checksum: "<<p.checksum; 
   if (check == -1){
-    cout<<" NOT Corrupt"<<endl;    
+    //cout<<" NOT Corrupt"<<endl;    
     return false;
   }
   else{
-    cout<<" CORRUPT:"<<check<<endl;
+    //cout<<" CORRUPT:"<<check<<endl;
     return true;
   }
 }
@@ -96,7 +85,7 @@ void A_output(struct msg message)
   p_toLayer3.seqnum = nextseqnum;
   p_toLayer3.acknum = nextseqnum;
   strncpy(p_toLayer3.payload, message.data, 20);
-  p_toLayer3.checksum = generate_checksum(p_toLayer3, 0); 
+  p_toLayer3.checksum = generate_checksum(p_toLayer3); 
   
   //Store a copy of Message
   sent_dataPkt[nextseqnum++] = p_toLayer3;
@@ -127,7 +116,7 @@ void A_input(struct pkt packet)
   cout<<"A_input ACK:"<<packet.acknum<<" received at time:"<<get_sim_time()<<endl; 
   
   //Check if ACK is corrupt
-  if (!check_corrupt(packet, 1)){
+  if (!check_corrupt(packet)){
     if (send_base > packet.acknum){
       //Restart timer
       stoptimer(0);
@@ -215,7 +204,7 @@ void B_input(struct pkt packet)
   char data_fromA[20];
   
   //Process if packet is not corrupt, and has expected seqnum
-  if (!check_corrupt(packet, 0) && packet.seqnum == expectedseqnum){
+  if (!check_corrupt(packet) && packet.seqnum == expectedseqnum){
     
     
     //Send data from A to Layer 5
@@ -224,19 +213,23 @@ void B_input(struct pkt packet)
     cout<<"B_input data sent to layer 5\n";
   
     //Send ACK to A for packet received
-    //p_toLayer3.seqnum = recv_seq;
     p_toLayer3.seqnum = expectedseqnum;
     p_toLayer3.acknum = expectedseqnum;
-    p_toLayer3.checksum = generate_checksum(p_toLayer3, 1);
+    //p_toLayer3.payload = {'\0'};
+    memset(p_toLayer3.payload,'\0', 20);
+    p_toLayer3.checksum = generate_checksum(p_toLayer3);
     sent_ackPkt = p_toLayer3;
     
     tolayer3(1, p_toLayer3);
     expectedseqnum++;
-    //recv_seq++;
+
     cout<<"B_input ACK"<<expectedseqnum-1<<" sent to layer 3\n";  
   }
+  
+  //In case of out of order delivery, discard packet and resend last ACK
   else{
-    cout<<"Inside B_input. Data corrupt\n";    
+    cout<<"Retransmit last ACK:"<<sent_ackPkt.seqnum<<"\n";
+    tolayer3(1, sent_ackPkt);
   }
 }
 
@@ -244,5 +237,13 @@ void B_input(struct pkt packet)
 /* entity B routines are called. You can use it to do any initialization */
 void B_init()
 {
-    cout<<"Inside B_init\n";
+  cout<<"Inside B_init\n";
+  //Initialize ACK0
+  struct pkt ack0; 
+  ack0.seqnum = expectedseqnum - 1;
+  ack0.acknum = expectedseqnum - 1;
+  //ack0.payload = {'\0'};
+  memset(ack0.payload,'\0', 20);
+  ack0.checksum = generate_checksum(ack0);
+  sent_ackPkt = ack0;  
 }
