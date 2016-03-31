@@ -55,43 +55,32 @@ static struct pkt recv_dataPkt[1010]; // Buffer of the data packet received by B
 static int ack_pkts[1010]; //Keep track of seqnum for which ack has been sent
 
 //Function to generate checksum
-int generate_checksum(struct pkt p, int DataOrAck){
+int generate_checksum(struct pkt p){
   int checksum = 0;
-  //Include payload only for Data Packet  
-  if (DataOrAck == 0){
-    for (int i = 0; i < 20; i++){
-      checksum += p.payload[i];
-    }
-    cout<<"Data: ";
+  
+  for (int i = 0; i < 20; i++){
+    checksum += p.payload[i];
   }
-  else{
-    cout<<"ACK: ";
-  }
+
   checksum += p.seqnum;
   checksum += p.acknum;
   
-  cout<<"Generated Checksum: "<<~checksum<<endl;
+  //cout<<"Generated Checksum: "<<~checksum<<endl;
   return ~checksum;
 }
 
 //Function to verify checksum
-bool check_corrupt(struct pkt p, int DataOrAck){
+bool check_corrupt(struct pkt p){
   int check = 0;
   check += p.seqnum;
   check += p.acknum;
   check += p.checksum; 
-  
-  //Include payload only for Data Packet
-  if (DataOrAck == 0){  
-    for (int i = 0; i < 20; i++){
-      check += p.payload[i];
-    }  
-    cout<<"Data: ";    
-  }
-  else{
-    cout<<"ACK: ";
+   
+  for (int i = 0; i < 20; i++){
+    check += p.payload[i];
   }  
-  cout<<"Checking Checksum: "<<p.checksum; 
+  
+  //cout<<"Checking Checksum: "<<p.checksum; 
   if (check == -1){
     cout<<" NOT Corrupt"<<endl;    
     return false;
@@ -137,7 +126,7 @@ void A_output(struct msg message)
   p_toLayer3.seqnum = nextseqnum;
   p_toLayer3.acknum = nextseqnum;
   strncpy(p_toLayer3.payload, message.data, 20);
-  p_toLayer3.checksum = generate_checksum(p_toLayer3, 0); 
+  p_toLayer3.checksum = generate_checksum(p_toLayer3); 
   
   //Store a copy of Message
   sent_dataPkt[nextseqnum++] = p_toLayer3;
@@ -154,13 +143,12 @@ void A_output(struct msg message)
       starttimer(0, timer_fin + delay);
     }
     
-    delay += DELAY;
-    
     //Keep details of timers of packets in flight
     in_flight.push_back(p_toLayer3);
     pkt_sent_timer[p_toLayer3.seqnum] = get_sim_time();
     in_flight_timer[p_toLayer3.seqnum] = pkt_sent_timer[p_toLayer3.seqnum] + timer_fin + delay;
     sort(in_flight.begin(), in_flight.end(), expiry_timer_less_than());    
+    delay += DELAY;
     
   }
   
@@ -180,7 +168,7 @@ void A_input(struct pkt packet)
   cout<<"A_input ACK:"<<packet.acknum<<" received at time:"<<get_sim_time()<<endl; 
   
   //Check if ACK is corrupt  
-  if (check_corrupt(packet, 1)){
+  if (check_corrupt(packet)){
     cout<<"Inside A_input. ACK corrupt\n";    
     return;
   }
@@ -205,6 +193,7 @@ void A_input(struct pkt packet)
       float remaining_time_before_timer_expires = in_flight_timer[packet.acknum] - end_time;
       if (remaining_time_before_timer_expires < 0) remaining_time_before_timer_expires = 0;      
       float transmission_time_diff = in_flight_timer[in_flight[0].seqnum] - end_time;
+      if (transmission_time_diff == 0) transmission_time_diff = DELAY;
       cout<<"A_input: Relative Timer:"<<remaining_time_before_timer_expires+transmission_time_diff<<endl;
       starttimer(0, remaining_time_before_timer_expires + transmission_time_diff);    
     }
@@ -240,13 +229,12 @@ void A_input(struct pkt packet)
           starttimer(0, timer_fin);
         }
         
-        delay += DELAY;
         //Add to the list of packets in flight, and record it sending time
         in_flight.push_back(sent_dataPkt[i]);
         pkt_sent_timer[sent_dataPkt[i].seqnum] = get_sim_time();
         in_flight_timer[sent_dataPkt[i].seqnum] = pkt_sent_timer[sent_dataPkt[i].seqnum] + timer_fin + delay; 
         sort(in_flight.begin(), in_flight.end(), expiry_timer_less_than());
-        
+        delay += DELAY;
 
         send_buffer_pos++;
       }
@@ -299,6 +287,7 @@ void A_timerinterrupt()
     float remaining_time_before_timer_expires = in_flight_timer[packet.seqnum] - end_time;
     if (remaining_time_before_timer_expires < 0) remaining_time_before_timer_expires = 0;
     float transmission_time_diff = in_flight_timer[in_flight[0].seqnum] - end_time;
+    if (transmission_time_diff == 0) transmission_time_diff = DELAY;
     cout<<"A_timerinterrupt: Relative Timer:"<<remaining_time_before_timer_expires+transmission_time_diff<<endl;
     starttimer(0, remaining_time_before_timer_expires + transmission_time_diff);  
   }
@@ -334,7 +323,7 @@ void B_input(struct pkt packet)
   char data_fromA[20];
   
   //Check if packet is corrupt
-  if (check_corrupt(packet, 0)){
+  if (check_corrupt(packet)){
     cout<<"B_input packet corrupt\n";    
     return;
   }
@@ -367,9 +356,11 @@ void B_input(struct pkt packet)
     }
     
     //Send ACK to A for packet received
-    p_toLayer3.seqnum = 1;
+    p_toLayer3.seqnum = packet.seqnum;
     p_toLayer3.acknum = packet.seqnum;
-    p_toLayer3.checksum = generate_checksum(p_toLayer3, 1);
+    //p_toLayer3.payload = {'\0'};
+    memset(p_toLayer3.payload,'\0', 20);    
+    p_toLayer3.checksum = generate_checksum(p_toLayer3);
     sent_ackPkt[packet.seqnum] = p_toLayer3;
     
     tolayer3(1, p_toLayer3);
