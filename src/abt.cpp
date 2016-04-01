@@ -2,6 +2,7 @@
 #include <iostream>
 #include <string>
 #include <cstring>
+
 using namespace std;
 /* ******************************************************************
  ALTERNATING BIT AND GO-BACK-N NETWORK EMULATOR: VERSION 1.1  J.F.Kurose
@@ -19,12 +20,13 @@ using namespace std;
 /********* STUDENTS WRITE THE NEXT SEVEN ROUTINES *********/
 //Global Params
 #define RTT 10
+#define BASE_RTT 12
 
 //Sender
 static int send_seq = -1; //Seq no of packet sent to B
 static int recv_ack = -1; //Ack num of last ACK received from B
 static struct pkt sent_dataPkt; // Copy of the last data packet sent to B
-static float start_time, end_time, timer_fin = 0.0;
+static float start_time, end_time, timer_fin;
 
 //Receiver
 static int recv_seq = -1; //Seq no of last packet received from A
@@ -32,43 +34,31 @@ static int send_ack = -1; //Ack num of last ACK sent to A
 static struct pkt sent_ackPkt; // Copy of last ACK sent to A
 
 //Function to generate checksum
-int generate_checksum(struct pkt p, int DataOrAck){
+int generate_checksum(struct pkt p){
   int checksum = 0;
-  //Include payload only for Data Packet  
-  if (DataOrAck == 0){
-    for (int i = 0; i < 20; i++){
-      checksum += p.payload[i];
-    }
-    cout<<"Data: ";
-  }
-  else{
-    cout<<"ACK: ";
+
+  for (int i = 0; i < 20; i++){
+    checksum += p.payload[i];
   }
   checksum += p.seqnum;
   checksum += p.acknum;
   
-  cout<<"Generated Checksum: "<<~checksum<<endl;
+  //cout<<"Generated Checksum: "<<~checksum<<endl;
   return ~checksum;
 }
 
 //Function to verify checksum
-bool check_corrupt(struct pkt p, int DataOrAck){
+bool check_corrupt(struct pkt p){
   int check = 0;
   check += p.seqnum;
   check += p.acknum;
   check += p.checksum; 
   
-  //Include payload only for Data Packet
-  if (DataOrAck == 0){  
-    for (int i = 0; i < 20; i++){
-      check += p.payload[i];
-    }  
-    cout<<"Data: ";    
-  }
-  else{
-    cout<<"ACK: ";
+  for (int i = 0; i < 20; i++){
+    check += p.payload[i];
   }  
-  cout<<"Checking Checksum: "<<p.checksum<<endl; 
+  
+  //cout<<"Checking Checksum: "<<p.checksum<<endl; 
   if (check == -1){
     cout<<"NOT Corrupt"<<endl;    
     return false;
@@ -96,8 +86,8 @@ void A_output(struct msg message)
   p_toLayer3.seqnum = send_seq;
   p_toLayer3.acknum = recv_ack;
   strncpy(p_toLayer3.payload, message.data, 20);
-  //TODO Generate checksum
-  p_toLayer3.checksum = generate_checksum(p_toLayer3, 0);  
+  //Generate checksum
+  p_toLayer3.checksum = generate_checksum(p_toLayer3);  
   sent_dataPkt = p_toLayer3;
   start_time = get_sim_time();
   
@@ -111,13 +101,13 @@ void A_input(struct pkt packet)
 {
   cout<<"A_input ACK:"<<packet.acknum<<" received at time:"<<get_sim_time(); 
   
-  //TODO check if ACK is corrupt, or duplicate ACK is received, then do nothing
-  if (check_corrupt(packet, 1) || packet.acknum == recv_ack){
+  //Check if ACK is corrupt, or duplicate ACK is received, then do nothing
+  if (check_corrupt(packet) || packet.acknum == recv_ack){
     cout<<"Inside A_input. ACK corrupt\n";    
     return;
   }
   
-  //TODO check if  duplicate ACK is received, then do nothing  
+  //Check if  duplicate ACK is received, then do nothing  
   if (packet.acknum == recv_ack){
     cout<<"Inside A_input. Duplicate ACK\n";    
     return;
@@ -134,7 +124,7 @@ void A_input(struct pkt packet)
     float new_rtt = end_time - start_time;
     if (new_rtt > RTT){
       float new_timer = (0.875 * timer_fin) + (0.125 * new_rtt);
-      if (new_timer > RTT*1.5){
+      if (new_timer > RTT && new_timer < 2*BASE_RTT){
         timer_fin = new_timer;
       }
       cout<<"Inside A_input. New RTT:"<<new_rtt<<" New timer set to:"<<timer_fin<<endl;
@@ -145,10 +135,7 @@ void A_input(struct pkt packet)
 /* called when A's timer goes off */
 void A_timerinterrupt()
 {
-  cout<<"Inside A_timerinterrupt\n";
-  //start_time = 0;
-  //timer_fin++;
-  timer_fin = 18;
+  timer_fin = BASE_RTT;
   cout<<"A_timerinterrupt retransmitted to layer 3, SEQ:"<<send_seq<<" Data:"<<sent_dataPkt.payload<<" Time:"<<get_sim_time()<<endl;
   starttimer(0, timer_fin);  
   tolayer3(0, sent_dataPkt);
@@ -159,7 +146,7 @@ void A_timerinterrupt()
 void A_init()
 {
   cout<<"Inside A_init\n";
-  timer_fin = 18;
+  timer_fin = BASE_RTT;
 }
 
 /* Note that with simplex transfer from a-to-B, there is no B_output() */
@@ -170,8 +157,8 @@ void B_input(struct pkt packet)
   struct pkt p_toLayer3;
   char data_fromA[20];
   
-  //TODO check if packet is corrupt, then send prev ACK
-  if (check_corrupt(packet, 0)){
+  //Check if packet is corrupt, then send prev ACK
+  if (check_corrupt(packet)){
     tolayer3(1, sent_ackPkt);
     return;    
   }
@@ -194,7 +181,8 @@ void B_input(struct pkt packet)
   //Send ACK to A for packet received
   p_toLayer3.seqnum = recv_seq;
   p_toLayer3.acknum = send_ack;
-  p_toLayer3.checksum = generate_checksum(p_toLayer3, 1);
+  memset(p_toLayer3.payload,'\0', 20);
+  p_toLayer3.checksum = generate_checksum(p_toLayer3);
   sent_ackPkt = p_toLayer3;
   
   tolayer3(1, p_toLayer3);
