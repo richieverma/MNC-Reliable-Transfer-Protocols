@@ -193,7 +193,7 @@ void A_input(struct pkt packet)
       float remaining_time_before_timer_expires = in_flight_timer[packet.acknum] - end_time;
       if (remaining_time_before_timer_expires < 0) remaining_time_before_timer_expires = 0;      
       float transmission_time_diff = in_flight_timer[in_flight[0].seqnum] - end_time;
-      if (transmission_time_diff == 0) transmission_time_diff = DELAY;
+      if (transmission_time_diff <= 0) transmission_time_diff = DELAY;
       cout<<"A_input: Relative Timer:"<<remaining_time_before_timer_expires+transmission_time_diff<<endl;
       starttimer(0, remaining_time_before_timer_expires + transmission_time_diff);    
     }
@@ -287,7 +287,7 @@ void A_timerinterrupt()
     float remaining_time_before_timer_expires = in_flight_timer[packet.seqnum] - end_time;
     if (remaining_time_before_timer_expires < 0) remaining_time_before_timer_expires = 0;
     float transmission_time_diff = in_flight_timer[in_flight[0].seqnum] - end_time;
-    if (transmission_time_diff == 0) transmission_time_diff = DELAY;
+    if (transmission_time_diff <= 0) transmission_time_diff = DELAY;
     cout<<"A_timerinterrupt: Relative Timer:"<<remaining_time_before_timer_expires+transmission_time_diff<<endl;
     starttimer(0, remaining_time_before_timer_expires + transmission_time_diff);  
   }
