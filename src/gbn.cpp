@@ -34,7 +34,6 @@ static float start_time, end_time, timer_fin = 0.0;
 
 //Receiver
 static int expectedseqnum = 1; //Expected Seq no of next packet received from A
-//static int recv_seq = 0; //Ack num of last ACK sent to A
 static struct pkt sent_ackPkt; // Copy of last ACK sent to A
 
 //Function to generate checksum
@@ -77,7 +76,7 @@ bool check_corrupt(struct pkt p){
 /* called from layer 5, passed the data to be sent to other side */
 void A_output(struct msg message)
 {
-  cout<<"A_output Base:"<<send_base<<" nextseqnum:"<<nextseqnum<<" window:"<<window<<endl;
+  //cout<<"A_output Base:"<<send_base<<" nextseqnum:"<<nextseqnum<<" window:"<<window<<endl;
 
   //Create new pkt to send to layer 3
   struct pkt p_toLayer3;
@@ -96,14 +95,14 @@ void A_output(struct msg message)
   
     if (send_base == nextseqnum-1){
       start_time = get_sim_time();      
-      cout<<"A_output sent to layer 3, SEQ:"<<send_base<<" Data:"<<message.data<<" Time:"<<get_sim_time()<<endl;
+      //cout<<"A_output sent to layer 3, SEQ:"<<send_base<<" Data:"<<message.data<<" Time:"<<get_sim_time()<<endl;
       starttimer(0, timer_fin);
     }
   }
   
   //Buffer if packet seqnum is out of sender window  
   else{
-    cout<<"A_output Message SEQ:"<<nextseqnum-1<<" buffered"<<endl;
+    //cout<<"A_output Message SEQ:"<<nextseqnum-1<<" buffered"<<endl;
     if (buffer_pos == -1){
       buffer_pos = nextseqnum-1;
     }    
@@ -113,7 +112,7 @@ void A_output(struct msg message)
 /* called from layer 3, when a packet arrives for layer 4 */
 void A_input(struct pkt packet)
 {
-  cout<<"A_input ACK:"<<packet.acknum<<" received at time:"<<get_sim_time()<<endl; 
+  //cout<<"A_input ACK:"<<packet.acknum<<" received at time:"<<get_sim_time()<<endl; 
   
   //Check if ACK is corrupt
   if (!check_corrupt(packet)){
@@ -136,7 +135,7 @@ void A_input(struct pkt packet)
         if (new_timer > RTT && new_timer < 2*BASE_RTT){
           timer_fin = new_timer;
         }
-        cout<<"Inside A_input. New RTT:"<<new_rtt<<" New timer set to:"<<timer_fin<<endl;
+        //cout<<"Inside A_input. New RTT:"<<new_rtt<<" New timer set to:"<<timer_fin<<endl;
       }          
     }
     
@@ -153,7 +152,7 @@ void A_input(struct pkt packet)
         if (new_timer > RTT && new_timer < 2*BASE_RTT){
           timer_fin = new_timer;
         }
-        cout<<"Inside A_input. New RTT:"<<new_rtt<<" New timer set to:"<<timer_fin<<endl;
+        //cout<<"Inside A_input. New RTT:"<<new_rtt<<" New timer set to:"<<timer_fin<<endl;
       }  
       
       //Check and send any buffered messages that fall into the new sender window
@@ -169,7 +168,7 @@ void A_input(struct pkt packet)
     }    
   }
   else{
-    cout<<"Inside A_input. ACK corrupt\n";    
+    //cout<<"Inside A_input. ACK corrupt\n";    
     return;
   }
 }
@@ -177,7 +176,7 @@ void A_input(struct pkt packet)
 /* called when A's timer goes off */
 void A_timerinterrupt()
 {
-  cout<<"Inside A_timerinterrupt\n";
+  //cout<<"Inside A_timerinterrupt\n";
   timer_fin = BASE_RTT;
   starttimer(0, timer_fin); 
   //Check and send all messages that fall into the window
@@ -190,7 +189,7 @@ void A_timerinterrupt()
 /* entity A routines are called. You can use it to do any initialization */
 void A_init()
 {
-  cout<<"Inside A_init\n";
+  //cout<<"Inside A_init\n";
   timer_fin = BASE_RTT;
   window = getwinsize();
 }
@@ -210,12 +209,11 @@ void B_input(struct pkt packet)
     //Send data from A to Layer 5
     strncpy(data_fromA, packet.payload, 20);
     tolayer5(1, data_fromA);
-    cout<<"B_input data sent to layer 5\n";
+    //cout<<"B_input data sent to layer 5\n";
   
     //Send ACK to A for packet received
     p_toLayer3.seqnum = expectedseqnum;
     p_toLayer3.acknum = expectedseqnum;
-    //p_toLayer3.payload = {'\0'};
     memset(p_toLayer3.payload,'\0', 20);
     p_toLayer3.checksum = generate_checksum(p_toLayer3);
     sent_ackPkt = p_toLayer3;
@@ -223,12 +221,12 @@ void B_input(struct pkt packet)
     tolayer3(1, p_toLayer3);
     expectedseqnum++;
 
-    cout<<"B_input ACK"<<expectedseqnum-1<<" sent to layer 3\n";  
+    //cout<<"B_input ACK"<<expectedseqnum-1<<" sent to layer 3\n";  
   }
   
   //In case of out of order delivery, discard packet and resend last ACK
   else{
-    cout<<"Retransmit last ACK:"<<sent_ackPkt.seqnum<<"\n";
+    //cout<<"Retransmit last ACK:"<<sent_ackPkt.seqnum<<"\n";
     tolayer3(1, sent_ackPkt);
   }
 }
@@ -237,12 +235,11 @@ void B_input(struct pkt packet)
 /* entity B routines are called. You can use it to do any initialization */
 void B_init()
 {
-  cout<<"Inside B_init\n";
+  //cout<<"Inside B_init\n";
   //Initialize ACK0
   struct pkt ack0; 
   ack0.seqnum = expectedseqnum - 1;
   ack0.acknum = expectedseqnum - 1;
-  //ack0.payload = {'\0'};
   memset(ack0.payload,'\0', 20);
   ack0.checksum = generate_checksum(ack0);
   sent_ackPkt = ack0;  
